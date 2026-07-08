@@ -21,6 +21,32 @@
   const sendQueues = new Map();  // id -> array of File
   const transfers = new Map();   // transferId -> row element + meta
 
+  // ---------- wake lock (cegah layar mati saat transfer) ----------
+  let wakeLock = null;
+  let activeTransferCount = 0;
+
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator) || wakeLock) return;
+    try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* diabaikan */ }
+  }
+  function releaseWakeLockIfIdle() {
+    if (activeTransferCount <= 0 && wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && activeTransferCount > 0) acquireWakeLock();
+  });
+  function transferStarted() {
+    activeTransferCount++;
+    acquireWakeLock();
+  }
+  function transferEnded() {
+    activeTransferCount = Math.max(0, activeTransferCount - 1);
+    releaseWakeLockIfIdle();
+  }
+
   // ---------- DOM ----------
   const $ = (id) => document.getElementById(id);
   const nameModal = $('nameModal');
@@ -185,6 +211,13 @@
       if (e.candidate) sendSignal(id, { kind: 'candidate', candidate: e.candidate });
     };
 
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'disconnected' || pc.iceConnectionState === 'closed') {
+        failActiveTransfersFor(id);
+        renderPeersList();
+      }
+    };
+
     if (initiate) {
       const dc = pc.createDataChannel('file');
       setupDataChannel(id, dc);
@@ -227,25 +260,48 @@
     dc.onopen = () => renderPeersList();
     dc.onclose = () => renderPeersList();
 
-    let incoming = null; // { id, name, size, mime, received, chunks, rowEl }
+    peer.activeSends = peer.activeSends || new Set();
 
     dc.onmessage = (ev) => {
       if (typeof ev.data === 'string') {
         const msg = JSON.parse(ev.data);
         if (msg.type === 'meta') {
-          incoming = { id: msg.id, name: msg.name, size: msg.size, mime: msg.mime, received: 0, chunks: [] };
-          incoming.rowEl = createTransferRow(msg.id, msg.name, msg.size, false);
-        } else if (msg.type === 'done' && incoming) {
-          const blob = new Blob(incoming.chunks, { type: incoming.mime || 'application/octet-stream' });
-          finishTransferRow(incoming.rowEl, blob, incoming.name);
-          incoming = null;
+          peer.incoming = { id: msg.id, name: msg.name, size: msg.size, mime: msg.mime, received: 0, chunks: [] };
+          peer.incoming.rowEl = createTransferRow(msg.id, msg.name, msg.size, false);
+          transferStarted();
+        } else if (msg.type === 'done' && peer.incoming) {
+          const blob = new Blob(peer.incoming.chunks, { type: peer.incoming.mime || 'application/octet-stream' });
+          finishTransferRow(peer.incoming.rowEl, blob, peer.incoming.name);
+          peer.incoming = null;
+          transferEnded();
         }
-      } else if (incoming) {
-        incoming.chunks.push(ev.data);
-        incoming.received += ev.data.byteLength;
-        updateTransferProgress(incoming.rowEl, incoming.received, incoming.size);
+      } else if (peer.incoming) {
+        peer.incoming.chunks.push(ev.data);
+        peer.incoming.received += ev.data.byteLength;
+        updateTransferProgress(peer.incoming.rowEl, peer.incoming.received, peer.incoming.size);
       }
     };
+  }
+
+  function markRowFailed(rowEl) {
+    if (!rowEl || rowEl.classList.contains('done')) return;
+    rowEl.classList.add('done');
+    const actions = rowEl.querySelector('.transfer-actions');
+    if (actions) actions.innerHTML = '<span style="color:#F26D6D;font-family:var(--mono);font-size:0.75rem;">terputus — coba kirim ulang</span>';
+  }
+
+  function failActiveTransfersFor(id) {
+    const peer = peers.get(id);
+    if (!peer) return;
+    if (peer.incoming) {
+      markRowFailed(peer.incoming.rowEl);
+      peer.incoming = null;
+      transferEnded();
+    }
+    if (peer.activeSends) {
+      peer.activeSends.forEach((rowEl) => { markRowFailed(rowEl); transferEnded(); });
+      peer.activeSends.clear();
+    }
   }
 
   // ---------- file sending ----------
@@ -287,33 +343,49 @@
     const peer = peers.get(peerId);
     if (!peer || !peer.dc || peer.dc.readyState !== 'open') return;
     for (const file of Array.from(fileList)) {
-      await sendFile(peer.dc, file);
+      await sendFile(peerId, peer.dc, file);
     }
   }
 
-  function sendFile(dc, file) {
+  function sendFile(peerId, dc, file) {
     return new Promise((resolve) => {
+      const peer = peers.get(peerId);
       const id = crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
       const rowEl = createTransferRow(id, file.name, file.size, true);
+      transferStarted();
+      if (peer) { peer.activeSends = peer.activeSends || new Set(); peer.activeSends.add(rowEl); }
+
+      let settled = false;
+      function finish() {
+        if (settled) return;
+        settled = true;
+        if (peer && peer.activeSends) peer.activeSends.delete(rowEl);
+        transferEnded();
+        resolve();
+      }
+
       dc.send(JSON.stringify({ type: 'meta', id, name: file.name, size: file.size, mime: file.type }));
 
       const reader = file.stream().getReader();
       let sent = 0;
 
       function sendNext() {
+        if (dc.readyState !== 'open') { markRowFailed(rowEl); finish(); return; }
         reader.read().then(({ done, value }) => {
+          if (dc.readyState !== 'open') { markRowFailed(rowEl); finish(); return; }
           if (done) {
             dc.send(JSON.stringify({ type: 'done', id }));
             markRowSentDone(rowEl);
-            resolve();
+            finish();
             return;
           }
           pushChunks(value, 0);
-        });
+        }).catch(() => { markRowFailed(rowEl); finish(); });
       }
 
       function pushChunks(buf, offset) {
         while (offset < buf.byteLength) {
+          if (dc.readyState !== 'open') { markRowFailed(rowEl); finish(); return; }
           const slice = buf.slice(offset, offset + CHUNK_SIZE);
           if (dc.bufferedAmount > BUFFERED_THRESHOLD) {
             dc.onbufferedamountlow = () => {
@@ -415,8 +487,14 @@
   qrBtn.onclick = () => {
     qrModal.hidden = false;
     qrCanvas.innerHTML = '';
-    QRCode.toCanvas(document.createElement('canvas'), location.href, { width: 220, margin: 1 }, (err, canvas) => {
-      if (!err) qrCanvas.appendChild(canvas);
+    const canvas = document.createElement('canvas');
+    QRCode.toCanvas(canvas, location.href, { width: 220, margin: 1 }, (err) => {
+      if (!err) {
+        qrCanvas.appendChild(canvas);
+      } else {
+        qrCanvas.innerHTML = '<p style="color:#8A95A6;font-size:0.8rem;">QR gagal dibuat, pakai Salin Link saja.</p>';
+        console.error('QR error', err);
+      }
     });
   };
   qrClose.onclick = () => { qrModal.hidden = true; };

@@ -1,0 +1,15 @@
+{
+  "name": "Nyebrang — kirim file lintas device",
+  "short_name": "Nyebrang",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0A0E14",
+  "theme_color": "#0A0E14",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

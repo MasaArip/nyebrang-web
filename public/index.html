@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nyebrang — kirim file lintas device</title>
+<meta name="theme-color" content="#0A0E14">
+<link rel="manifest" href="/manifest.json">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="nameModal" class="modal">
+  <div class="modal-card">
+    <p class="eyebrow">Sebelum mulai</p>
+    <h2>Device ini namanya apa?</h2>
+    <input id="nameInput" type="text" maxlength="24" placeholder="mis. iPad Arif" autocomplete="off">
+    <button id="nameSubmit">Lanjut</button>
+  </div>
+</div>
+
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-name">nyebrang</span>
+    </div>
+    <div class="room-controls">
+      <span class="room-label">RUANG</span>
+      <code id="roomCode">------</code>
+      <button id="copyLink" class="ghost-btn" title="Salin link ajakan">Salin link</button>
+      <button id="qrBtn" class="ghost-btn" title="Tampilkan QR">QR</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="radar-wrap">
+      <div class="radar" id="radar">
+        <div class="ring r1"></div>
+        <div class="ring r2"></div>
+        <div class="ring r3"></div>
+        <div class="self-node" id="selfNode">
+          <span id="selfInitial">•</span>
+        </div>
+        <!-- peer nodes injected here -->
+      </div>
+      <p class="radar-caption" id="radarCaption">Menunggu device lain gabung ke ruang ini…</p>
+    </section>
+
+    <section class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" multiple hidden>
+      <p class="drop-title">Seret file ke sini</p>
+      <p class="drop-sub">atau <button id="browseBtn" class="link-btn">pilih file</button></p>
+      <p class="drop-hint">File terkirim langsung antar device, tidak lewat server.</p>
+    </section>
+
+    <section class="peers-panel" id="peersPanel">
+      <p class="panel-title">Device di ruang ini</p>
+      <ul id="peersList" class="peers-list">
+        <li class="peers-empty">Belum ada device lain. Bagikan link/QR di atas.</li>
+      </ul>
+    </section>
+
+    <section class="transfers-panel" id="transfersPanel" hidden>
+      <p class="panel-title">Transfer</p>
+      <ul id="transfersList" class="transfers-list"></ul>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <span id="statusDot" class="status-dot"></span>
+    <span id="statusText">Menghubungkan…</span>
+  </footer>
+</div>
+
+<div id="qrModal" class="modal" hidden>
+  <div class="modal-card qr-card">
+    <p class="eyebrow">Scan buat gabung</p>
+    <div id="qrCanvas"></div>
+    <button id="qrClose" class="ghost-btn">Tutup</button>
+  </div>
+</div>
+
+<div id="targetModal" class="modal" hidden>
+  <div class="modal-card">
+    <p class="eyebrow">Kirim ke</p>
+    <ul id="targetList" class="peers-list"></ul>
+    <button id="targetCancel" class="ghost-btn">Batal</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
